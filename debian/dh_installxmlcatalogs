@@ -152,6 +152,61 @@ sub del_xmlcat_cmd ($$$;$) {
     return $cmd;
 }
 
+# Automatically add a shell script snippet to a debian script.
+# Only works if the script has #DEBHELPER# in it.
+#
+# Parameters:
+# 1: package
+# 2: script to add to
+# 3: filename of snippet
+# 4: sed to run on the snippet. Ie, s/#PACKAGE#/$PACKAGE/
+sub autoscript2 {
+	my $package=shift;
+	my $script=shift;
+	my $filename=shift;
+	my $sed=shift || "";
+
+	# This is the file we will modify.
+	my $outfile="debian/".pkgext($package)."$script.debhelper";
+
+	# Figure out what shell script snippet to use.
+	my $infile;
+	if (defined($ENV{DH_AUTOSCRIPTDIR}) && 
+	    -e "$ENV{DH_AUTOSCRIPTDIR}/$filename") {
+		$infile="$ENV{DH_AUTOSCRIPTDIR}/$filename";
+	}
+	else {
+		if (-e "/usr/share/debhelper/autoscripts/$filename") {
+			$infile="/usr/share/debhelper/autoscripts/$filename";
+		}
+		else {
+			error("/usr/share/debhelper/autoscripts/$filename does not exist");
+		}
+	}
+
+    my $sedscript = "$outfile.sed";
+    open (SED_SCRIPT, ">$sedscript");
+    print SED_SCRIPT $sed;
+    close (SED_SCRIPT);
+
+	if (-e $outfile && ($script eq 'postrm' || $script eq 'prerm')
+	   && !compat(5)) {
+		# Add fragments to top so they run in reverse order when removing.
+		complex_doit("echo \"# Automatically added by ".basename($0)."\"> $outfile.new");
+		complex_doit("sed -f $sedscript $infile >> $outfile.new");
+		complex_doit("echo '# End automatically added section' >> $outfile.new");
+		complex_doit("cat $outfile >> $outfile.new");
+		complex_doit("mv $outfile.new $outfile");
+	}
+	else {
+		complex_doit("echo \"# Automatically added by ".basename($0)."\">> $outfile");
+		complex_doit("sed -f $sedscript $infile >> $outfile");
+		complex_doit("echo '# End automatically added section' >> $outfile");
+	}
+
+    unlink ($sedscript);
+}
+
 ## ----------------------------------------------------------------------
 foreach my $package (@{$dh{DOPACKAGES}}) {
 
@@ -267,11 +322,11 @@ foreach my $package (@{$dh{DOPACKAGES}}) {
 			$ADD_ROOT    or $ADD_ROOT    = "\t:";
 			$DEL_PACKAGE or $DEL_PACKAGE = "\t:";
 			$DEL_ROOT    or $DEL_ROOT    = "\t:";
-			autoscript( $package, "postinst", "postinst-xmlcatalog",
+			autoscript2( $package, "postinst", "postinst-xmlcatalog",
 				    "s%#ADD_PACKAGE#%$ADD_PACKAGE%g; s%#ADD_ROOT#%$ADD_ROOT%g;" );
-			autoscript( $package, "prerm", "prerm-xmlcatalog",
+			autoscript2( $package, "prerm", "prerm-xmlcatalog",
 				    "s%#DEL_PACKAGE#%$DEL_PACKAGE%g; s%#DEL_ROOT#%$DEL_ROOT%g;" );
-			autoscript( $package, "postrm", "postrm-xmlcatalog",
+			autoscript2( $package, "postrm", "postrm-xmlcatalog",
 				    "s%#PACKAGECAT#%$packagecat%g;" );
 
 			addsubstvar( $package,
